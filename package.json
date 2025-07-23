@@ -1,9 +1,20 @@
 {
+  "name": "ipfs-eth-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
   "dependencies": {
     "@pinata/sdk": "^2.1.0",
     "dotenv": "^17.2.0",
     "ethers": "^6.15.0",
     "express": "^5.1.0",
     "multer": "^2.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
   }
 }
