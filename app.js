@@ -5,6 +5,7 @@ import path from "path";
 import dotenv from "dotenv";
 import pinataSDK from '@pinata/sdk';
 import { ethers } from "ethers";
+import * as Hash from 'ipfs-only-hash';
 
 dotenv.config();
 const app = express();
@@ -23,6 +24,7 @@ const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 import ipRegistryABI from "./abi/IPRegistry.json" with { type: "json" };
 import licenseManagerABI from "./abi/LicenseManager.json" with { type: "json" };
 import oracleABI from "./abi/SimpleOracle.json" with { type: "json" };
+
 const ipRegistry = new ethers.Contract(process.env.IPREGISTRY_ADDRESS, ipRegistryABI, wallet);
 const licenseManager = new ethers.Contract(process.env.LICENSEMANAGER_ADDRESS, licenseManagerABI, wallet);
 const oracle = new ethers.Contract(process.env.ORACLE_ADDRESS, oracleABI, wallet);
@@ -31,17 +33,37 @@ const oracle = new ethers.Contract(process.env.ORACLE_ADDRESS, oracleABI, wallet
 app.post("/api/ipfs/upload", upload.single("file"), async (req, res) => {
     try {
         const { originalname, path: tempPath } = req.file;
+
+        // 1. 本地计算 IPFS CID（不上传）
+        const cid = await Hash.of(tempPath);
+        console.log(`Local IPFS Calculates: ${cid}`);
+        const url = `https://gateway.pinata.cloud/ipfs/${cid}`;
+        // 2. 检查 Pinata gateway 中是否已经有这个CID的文件
+        console.log("===========FUCKING WITH PINATA============")
+        const exists = await fetch(url, { method: 'HEAD' })
+                                    .then(resp => resp.ok)
+                                    .catch(() => false);
+        console.log("PINATA RESPOND!!!!!!!!!!")
+        if (exists) {
+            fs.unlinkSync(tempPath);
+            return res.json({ url, duplicated: true });
+        }
+        // 3. 若不存在，则上传到 Pinata
         const readableStream = fs.createReadStream(tempPath);
         const options = {
             pinataMetadata: { name: originalname }
         };
         const { IpfsHash } = await pinata.pinFileToIPFS(readableStream, options);
+
+        // 清理临时文件
         fs.unlinkSync(tempPath);
-        res.json({ cid: IpfsHash, url: `https://gateway.pinata.cloud/ipfs/${IpfsHash}` });
+
+        res.json({ cid: IpfsHash, url: `https://gateway.pinata.cloud/ipfs/${IpfsHash}`, duplicated: false });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
+
 
 //--- 2. 上链注册作品(NFT+元数据) ---
 app.post("/api/ip/register", async (req, res) => {

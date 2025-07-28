@@ -1,3 +1,4 @@
 .env
 .devcontainer
 node_modules
+uploads/
