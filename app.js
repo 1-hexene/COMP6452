@@ -1,3 +1,4 @@
+
 import express from "express";
 import multer from "multer";
 import * as fs from "fs";
@@ -5,11 +6,37 @@ import path from "path";
 import dotenv from "dotenv";
 import pinataSDK from '@pinata/sdk';
 import { ethers } from "ethers";
-import * as Hash from 'ipfs-only-hash';
+
+
+// swagger相关
+import swaggerUi from 'swagger-ui-express';
+import swaggerJsdoc from 'swagger-jsdoc';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
 const app = express();
 app.use(express.json());
+
+
+// swagger配置
+const __filename = fileURLToPath(import.meta.url);
+const swaggerOptions = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'IPFS/Checker/Blockchain API',
+      version: '1.0.0',
+      description: 'API documentation for IPFS upload, image similarity, and blockchain registration.'
+    },
+    servers: [
+      { url: 'http://localhost:3001', description: 'Local server' }
+    ]
+  },
+  apis: [__filename],
+};
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 //--- Pinata相关 ---
 const pinata = new pinataSDK({
@@ -29,33 +56,127 @@ const ipRegistry = new ethers.Contract(process.env.IPREGISTRY_ADDRESS, ipRegistr
 const licenseManager = new ethers.Contract(process.env.LICENSEMANAGER_ADDRESS, licenseManagerABI, wallet);
 const oracle = new ethers.Contract(process.env.ORACLE_ADDRESS, oracleABI, wallet);
 
-//--- 1. 上传文件到IPFS（Pinata）---
+// const fs = require('fs');
+const python_process_path = "/home/shilong/miniconda3/envs/comp6733/bin/python";
+
+async function insertImageToDB(imgPath) {
+    return new Promise((resolve, reject) => {
+        const pythonProcess = spawn(python_process_path, ['checker.py', imgPath, '--insert']);
+        let stdout = '';
+        let stderr = '';
+        pythonProcess.stdout.on('data', (data) => { stdout += data; });
+        pythonProcess.stderr.on('data', (data) => { stderr += data; });
+        pythonProcess.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    const result = JSON.parse(stdout);
+                    resolve(result);
+                } catch (e) {
+                    reject(new Error('Failed to parse checker output: ' + stdout));
+                }
+            } else {
+                reject(new Error(stderr || 'Python process exited with code ' + code));
+            }
+        });
+    });
+}
+
+function mapImgIdToCid(img_id, cid) {
+    const cidMapPath = path.join(__dirname, "cidmap.json");
+    let cidMap = {};
+    if (fs.existsSync(cidMapPath)) {
+        try {
+            cidMap = JSON.parse(fs.readFileSync(cidMapPath, "utf-8"));
+        } catch {}
+    }
+    cidMap[img_id] = cid;
+    fs.writeFileSync(cidMapPath, JSON.stringify(cidMap, null, 2), "utf-8");
+}
+
+async function querySimilarImages(imgPath, n = 5, threshold = 0.7) {
+    return new Promise((resolve, reject) => {
+        const pythonProcess = spawn(python_process_path, [
+            'checker.py', imgPath, '--query', '--query_n', n.toString(), '--query_threshold', threshold.toString()
+        ]);
+        let stdout = '';
+        let stderr = '';
+        pythonProcess.stdout.on('data', (data) => { stdout += data; });
+        pythonProcess.stderr.on('data', (data) => { stderr += data; });
+        pythonProcess.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    const result = JSON.parse(stdout);
+                    resolve(result.results || []);
+                } catch (e) {
+                    reject(new Error('Failed to parse checker output: ' + stdout));
+                }
+            } else {
+                reject(new Error(stderr || 'Python process exited with code ' + code));
+            }
+        });
+    });
+}
+
+/**
+ * @swagger
+ * /api/ipfs/upload:
+ *   post:
+ *     summary: Upload an image to IPFS and check for duplicates
+ *     consumes:
+ *       - multipart/form-data
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Upload result
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 cid:
+ *                   type: string
+ *                 url:
+ *                   type: string
+ *                 duplicated:
+ *                   type: boolean
+ *                 img_id:
+ *                   type: integer
+ *                 similarity:
+ *                   type: number
+ */
 app.post("/api/ipfs/upload", upload.single("file"), async (req, res) => {
     try {
         const { originalname, path: tempPath } = req.file;
 
-        // 1. 本地计算 IPFS CID（不上传）
-        const cid = await Hash.of(tempPath);
-        console.log(`Local IPFS Calculates: ${cid}`);
-        const url = `https://gateway.pinata.cloud/ipfs/${cid}`;
-        // 2. 检查 Pinata gateway 中是否已经有这个CID的文件
-        console.log("===========FUCKING WITH PINATA============")
-        const exists = await fetch(url, { method: 'HEAD' })
-                                    .then(resp => resp.ok)
-                                    .catch(() => false);
-        console.log("PINATA RESPOND!!!!!!!!!!")
-        if (exists) {
+        const similarList = await querySimilarImages(tempPath, 1, 0.95);
+        if (similarList && similarList.length > 0 && similarList[0].similarity >= 0.95) {
             fs.unlinkSync(tempPath);
-            return res.json({ url, duplicated: true });
+            return res.json({ duplicated: true, img_id: similarList[0].cid, similarity: similarList[0].similarity });
         }
-        // 3. 若不存在，则上传到 Pinata
+
+        const insertResult = await insertImageToDB(tempPath);
+        if (!insertResult || insertResult.status !== 'inserted') {
+            fs.unlinkSync(tempPath);
+            return res.status(500).json({ error: 'Failed to insert image to DB', detail: insertResult });
+        }
+        const img_id = insertResult.img_id;
+
         const readableStream = fs.createReadStream(tempPath);
         const options = {
             pinataMetadata: { name: originalname }
         };
         const { IpfsHash } = await pinata.pinFileToIPFS(readableStream, options);
 
-        // 清理临时文件
+        mapImgIdToCid(img_id, IpfsHash);
+
         fs.unlinkSync(tempPath);
 
         res.json({ cid: IpfsHash, url: `https://gateway.pinata.cloud/ipfs/${IpfsHash}`, duplicated: false });
@@ -65,7 +186,36 @@ app.post("/api/ipfs/upload", upload.single("file"), async (req, res) => {
 });
 
 
-//--- 2. 上链注册作品(NFT+元数据) ---
+/**
+ * @swagger
+ * /api/ip/register:
+ *   post:
+ *     summary: Register intellectual property on the blockchain
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               author:
+ *                 type: string
+ *               filename:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               cid:
+ *                 type: string
+ *               licenseType:
+ *                 type: string
+ *               location:
+ *                 type: string
+ *               isCommercial:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Registration result
+ */
 app.post("/api/ip/register", async (req, res) => {
     try {
         const { author, filename, description, cid, licenseType, location, isCommercial } = req.body;
@@ -158,7 +308,40 @@ app.post("/api/ip/register", async (req, res) => {
     }
 });
 
-//--- 3. 创建/授权作品 ---
+/**
+ * @swagger
+ * /api/license/create:
+ *   post:
+ *     summary: Create a new license for an intellectual property
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               licensor:
+ *                 type: string
+ *               licensee:
+ *                 type: string
+ *               price:
+ *                 type: string
+ *               scope:
+ *                 type: string
+ *               terms:
+ *                 type: string
+ *               cid:
+ *                 type: string
+ *               transferable:
+ *                 type: string
+ *               beginDate:
+ *                 type: integer
+ *               endDate:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: License creation result
+ */
 app.post("/api/license/create", async (req, res) => {
     try {
         const { licensor, licensee, price, scope, terms, cid, transferable, beginDate, endDate } = req.body;
@@ -175,7 +358,24 @@ app.post("/api/license/create", async (req, res) => {
     }
 });
 
-//--- 4. 查询账户对作品授权有效性 ---
+/**
+ * @swagger
+ * /api/license/validate:
+ *   get:
+ *     summary: Query the validity of a user's license for a work
+ *     parameters:
+ *       - in: query
+ *         name: user
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: cid
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: License validity result
+ */
 app.get("/api/license/validate", async (req, res) => {
     try {
         const { user, cid } = req.query;
@@ -186,7 +386,20 @@ app.get("/api/license/validate", async (req, res) => {
     }
 });
 
-//--- 5. Oracle合约查询价格 ---
+/**
+ * @swagger
+ * /api/oracle/price:
+ *   get:
+ *     summary: Get the price of a work in a specific currency
+ *     parameters:
+ *       - in: query
+ *         name: currency
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: 价格结果
+ */
 app.get("/api/oracle/price", async (req, res) => {
     try {
         const { currency } = req.query;
@@ -197,7 +410,6 @@ app.get("/api/oracle/price", async (req, res) => {
     }
 });
 
-// 在服务器启动时添加网络检查
 async function checkNetwork() {
     try {
         const network = await provider.getNetwork();
@@ -206,7 +418,6 @@ async function checkNetwork() {
         const balance = await provider.getBalance(wallet.address);
         console.log('Wallet balance:', ethers.formatEther(balance), 'ETH');
         
-        // 检查合约是否存在
         const code = await provider.getCode(process.env.IPREGISTRY_ADDRESS);
         if (code === '0x') {
             console.error('Contract not found at address:', process.env.IPREGISTRY_ADDRESS);
@@ -221,5 +432,8 @@ async function checkNetwork() {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
     console.log(`Server running at <http://localhost>:${PORT}`);
+    console.log('Checking network...');
     await checkNetwork();
+    console.log('Network check completed.');
+    console.log('API documentation available at <http://localhost>:3001/api-docs');
 });

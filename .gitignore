@@ -2,3 +2,5 @@
 .devcontainer
 node_modules
 uploads/
+*.json
+*.pkl
