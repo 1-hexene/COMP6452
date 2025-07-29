@@ -6,7 +6,7 @@ import path from "path";
 import dotenv from "dotenv";
 import pinataSDK from '@pinata/sdk';
 import { ethers } from "ethers";
-
+import { spawn } from 'child_process';
 
 // swagger相关
 import swaggerUi from 'swagger-ui-express';
@@ -19,7 +19,6 @@ const app = express();
 app.use(express.json());
 
 
-// swagger配置
 const __filename = fileURLToPath(import.meta.url);
 const swaggerOptions = {
   definition: {
@@ -56,12 +55,11 @@ const ipRegistry = new ethers.Contract(process.env.IPREGISTRY_ADDRESS, ipRegistr
 const licenseManager = new ethers.Contract(process.env.LICENSEMANAGER_ADDRESS, licenseManagerABI, wallet);
 const oracle = new ethers.Contract(process.env.ORACLE_ADDRESS, oracleABI, wallet);
 
-// const fs = require('fs');
 const python_process_path = "/home/shilong/miniconda3/envs/comp6733/bin/python";
-
-async function insertImageToDB(imgPath) {
+const cidmap_path = "cidmap.json"
+async function insertImageToDB(imgPath, threshold = 0.85) {
     return new Promise((resolve, reject) => {
-        const pythonProcess = spawn(python_process_path, ['checker.py', imgPath, '--insert']);
+        const pythonProcess = spawn(python_process_path, ['checker.py', imgPath, '--insert', '--insert_threshold', threshold.toString()]);
         let stdout = '';
         let stderr = '';
         pythonProcess.stdout.on('data', (data) => { stdout += data; });
@@ -82,7 +80,7 @@ async function insertImageToDB(imgPath) {
 }
 
 function mapImgIdToCid(img_id, cid) {
-    const cidMapPath = path.join(__dirname, "cidmap.json");
+    const cidMapPath = cidmap_path;
     let cidMap = {};
     if (fs.existsSync(cidMapPath)) {
         try {
@@ -159,13 +157,18 @@ app.post("/api/ipfs/upload", upload.single("file"), async (req, res) => {
         const similarList = await querySimilarImages(tempPath, 1, 0.95);
         if (similarList && similarList.length > 0 && similarList[0].similarity >= 0.95) {
             fs.unlinkSync(tempPath);
-            return res.json({ duplicated: true, img_id: similarList[0].cid, similarity: similarList[0].similarity });
+            return res.json({ duplicated: true, cid: similarList[0].cid, similarity: similarList[0].similarity,
+                url: `https://gateway.pinata.cloud/ipfs/${similarList[0].cid}`
+             });
         }
 
-        const insertResult = await insertImageToDB(tempPath);
+        const insertResult = await insertImageToDB(tempPath, 0.85);
         if (!insertResult || insertResult.status !== 'inserted') {
             fs.unlinkSync(tempPath);
-            return res.status(500).json({ error: 'Failed to insert image to DB', detail: insertResult });
+            // If existing image is found, return its details, if cid is "Unknown CID",
+            return res.json({ duplicated: true, cid: similarList[0].existing_img_cid, 
+                similarity: similarList[0].similarity
+            });
         }
         const img_id = insertResult.img_id;
 
@@ -178,6 +181,7 @@ app.post("/api/ipfs/upload", upload.single("file"), async (req, res) => {
         mapImgIdToCid(img_id, IpfsHash);
 
         fs.unlinkSync(tempPath);
+        console.log({ cid: IpfsHash, url: `https://gateway.pinata.cloud/ipfs/${IpfsHash}`, duplicated: false });
 
         res.json({ cid: IpfsHash, url: `https://gateway.pinata.cloud/ipfs/${IpfsHash}`, duplicated: false });
     } catch (e) {
@@ -185,6 +189,55 @@ app.post("/api/ipfs/upload", upload.single("file"), async (req, res) => {
     }
 });
 
+/**
+ * @swagger
+ * /api/ipfs/similar:
+ *   post:
+ *     summary: Query similar images from IPFS
+ *     consumes:
+ *       - multipart/form-data
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: List of similar images
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 results:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       cid:
+ *                         type: string
+ *                       similarity:
+ *                         type: number
+ */
+app.post("/api/ipfs/similar", upload.single("file"), async (req, res) => {
+    try {
+        const { path: tempPath } = req.file;
+        const similarList = await querySimilarImages(tempPath, 5, 0); 
+        fs.unlinkSync(tempPath);
+        const results = (similarList || []).map(item => ({
+            cid: item.cid,
+            similarity: item.similarity,
+            url: `https://gateway.pinata.cloud/ipfs/${item.cid}`
+        }));
+        res.json({ results });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
 /**
  * @swagger
@@ -435,5 +488,5 @@ app.listen(PORT, async () => {
     console.log('Checking network...');
     await checkNetwork();
     console.log('Network check completed.');
-    console.log('API documentation available at <http://localhost>:3001/api-docs');
+    console.log('API documentation available at http://localhost:3001/api-docs');
 });

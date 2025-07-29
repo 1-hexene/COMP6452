@@ -1,23 +1,18 @@
 import numpy as np
 from skimage.metrics import structural_similarity as ssim
-import matplotlib.pyplot as plt # Not used in main logic, can be removed if not needed elsewhere
 import cv2
-import hashlib # Not used in main logic, can be removed if not needed elsewhere
 from argparse import ArgumentParser
 import json
-import pickle # Added for binary serialization
-import sys # Added for stderr output and sys.exit
+import pickle 
+import sys 
 
-# Define paths for feature storage and CID mapping
-FEATURES_PATH = "features.pkl" # Changed to .pkl for binary storage
+FEATURES_PATH = "features.pkl" 
 CIDMAP_PATH = "cidmap.json"
 
 class ImageSimilarityDetector:
     def __init__(self):
-        # Initialize SIFT detector. SIFT might not be available in all OpenCV builds due to licensing.
-        # If issues arise, consider ORB (cv2.ORB_create()) with cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         self.feature_detector = cv2.SIFT_create()
-        self.matcher_type = 'FLANN' # FLANN is generally faster for SIFT/SURF
+        self.matcher_type = 'FLANN'
 
     def load_and_preprocess(self, img_path, target_size=(256, 256)):
         """
@@ -28,16 +23,11 @@ class ImageSimilarityDetector:
             img = cv2.imread(img_path)
             if img is None:
                 raise ValueError(f"Cannot load image: {img_path}")
-            
-            # Apply median blur for noise reduction before resizing
-            # Kernel size must be odd; 7 is a common choice.
             kernel_size = 7 
             img_blurred = cv2.medianBlur(img, kernel_size)
-            
             img_resized = cv2.resize(img_blurred, target_size, interpolation=cv2.INTER_AREA)
             return img, img_resized # Return original and resized
         except Exception as e:
-            # Print to stderr for debugging, but return None for caller to handle
             print(json.dumps({"error": f"Error loading or preprocessing image {img_path}: {e}"}), file=sys.stderr)
             return None, None
 
@@ -53,26 +43,24 @@ class ImageSimilarityDetector:
         gray_resized = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
         hsv_resized = cv2.cvtColor(img_resized, cv2.COLOR_BGR2HSV)
 
-        # SIFT feature detection
         kp, des = self.feature_detector.detectAndCompute(gray_resized, mask=None)
         
-        # Handle cases where SIFT might not find any keypoints/descriptors
         if des is None:
-            des = np.array([]) # Ensure descriptors is an empty NumPy array
+            des = np.array([]) 
         if kp is None:
             kp_count = 0
         else:
-            kp_count = len(kp) # Store count instead of KeyPoint objects
+            kp_count = len(kp) 
 
         features = {
             'phash': self.calculate_perceptual_hash(img_resized, hash_size),
             'dhash': self.calculate_dhash(img_resized, hash_size),
             'ahash': self.calculate_average_hash(img_resized, hash_size),
             'rot_hash': self.calculate_rotation_invariant_hash(img_resized, hash_size),
-            'hu_moments': self.calculate_hu_moments(img_resized), # Stored as np.ndarray
-            'histogram': cv2.calcHist([hsv_resized], [0, 1, 2], None, [50, 60, 60], [0, 180, 0, 256, 0, 256]), # Stored as np.ndarray
-            'keypoint_count': kp_count, # Stored as int
-            'descriptors': des # Stored as np.ndarray
+            'hu_moments': self.calculate_hu_moments(img_resized), 
+            'histogram': cv2.calcHist([hsv_resized], [0, 1, 2], None, [50, 60, 60], [0, 180, 0, 256, 0, 256]), 
+            'keypoint_count': kp_count,
+            'descriptors': des 
         }
         return features
 
@@ -88,15 +76,10 @@ class ImageSimilarityDetector:
             'hu_moments_similarity': self.compare_hu_moments(features1['hu_moments'], features2['hu_moments']),
             'rotation_invariant_hash_similarity': self.hash_similarity(features1['rot_hash'], features2['rot_hash'])
         }
-        # Ensure all values are standard Python floats for JSON serialization
         for key in quick_results:
             quick_results[key] = float(quick_results[key])
-
         quick_results['quick_average'] = float(np.mean(list(quick_results.values())))
-
-        # Use quick_average as the primary score for quick mode conclusion
         similarity_score_for_conclusion = quick_results['quick_average'] 
-
         if similarity_score_for_conclusion > 0.9:
             quick_conclusion = "Very similar"
         elif similarity_score_for_conclusion > 0.8:
@@ -110,25 +93,14 @@ class ImageSimilarityDetector:
                 'quick_conclusion': quick_conclusion,
                 'mode': 'quick'
             }
-
-        # Full mode calculations
-        # cv2.compareHist returns a float, max ensures it's not negative
         hist_similarity = max(cv2.compareHist(features1['histogram'], features2['histogram'], cv2.HISTCMP_CORREL), 0)
-        
-        # Pass keypoint counts instead of actual keypoint objects
         feature_similarity, good_matches = self.compare_descriptors(
             features1['descriptors'], features2['descriptors'],
             features1['keypoint_count'], features2['keypoint_count']
         )
-        
-        # Combine all similarity scores for overall average
         all_similarities = list(quick_results.values()) + [hist_similarity, feature_similarity]
         avg_similarity = float(np.mean(all_similarities)) # Ensure float
-
-        # Final similarity can be the average of all or a weighted combination
-        # For simplicity, using the overall average here.
         final_similarity = avg_similarity 
-
         if final_similarity > 0.85:
             conclusion = "Very similar"
         elif final_similarity > 0.7:
@@ -148,7 +120,6 @@ class ImageSimilarityDetector:
             'mode': 'full'
         }
 
-    # SSIM and MSE are not used in the main logic, but kept as utility functions
     def calculate_ssim(self, img1, img2):
         gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
         gray2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
@@ -178,25 +149,14 @@ class ImageSimilarityDetector:
         return ''.join(['1' if bit else '0' for bit in (resized > avg).flatten()])
     
     def calculate_rotation_invariant_hash(self, img, hash_size=8):
-        """
-        Calculates a hash that is more robust to rotation by sampling radial features.
-        """
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        # Resize to a larger size to get more detail for radial sampling
         resized = cv2.resize(gray, (hash_size * 2, hash_size * 2), interpolation=cv2.INTER_AREA)
         center = (hash_size, hash_size) # Center of the resized image
         radial_features = []
-        
-        # Sample pixels along circles at different angles
-        # Using hash_size * 8 samples for a denser hash, can be adjusted
         num_samples = hash_size * 8 
         for angle in range(0, 360, 360 // num_samples): 
-            # Calculate coordinates for a point on a circle
-            # Radius is 80% of hash_size to avoid border effects
             x = int(center[0] + hash_size * 0.8 * np.cos(np.radians(angle)))
             y = int(center[1] + hash_size * 0.8 * np.sin(np.radians(angle)))
-            
-            # Ensure coordinates are within image bounds
             x = max(0, min(x, resized.shape[1] - 1))
             y = max(0, min(y, resized.shape[0] - 1))
             radial_features.append(resized[y, x])
@@ -206,68 +166,48 @@ class ImageSimilarityDetector:
         return ''.join([str(bit) for bit in hash_bits])
 
     def hamming_distance(self, hash1, hash2):
-        """Calculates the Hamming distance between two binary hash strings."""
         if len(hash1) != len(hash2):
-            # This should ideally not happen if hashes are generated consistently
             raise ValueError("Hash length mismatch")
         return sum(c1 != c2 for c1, c2 in zip(hash1, hash2))
 
     def hash_similarity(self, hash1, hash2):
-        """Calculates similarity based on Hamming distance (1 - normalized distance)."""
         distance = self.hamming_distance(hash1, hash2)
         return 1 - (distance / len(hash1))
 
     def calculate_hu_moments(self, img):
-        """
-        Calculates Hu Moments from the image's grayscale representation.
-        Applies a log transformation for scale and rotation invariance.
-        """
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         moments = cv2.moments(gray)
         hu_moments = cv2.HuMoments(moments)
-        # Apply log transformation (as per OpenCV docs for better comparison)
-        # Add a small epsilon to avoid log(0) if moment is zero
         return -np.sign(hu_moments) * np.log10(np.abs(hu_moments) + 1e-10)
 
     def compare_hu_moments(self, hu1, hu2):
-        """
-        Compares two sets of Hu Moments using Euclidean distance.
-        Returns a similarity score (inverse of distance).
-        """
         distance = np.linalg.norm(hu1 - hu2)
-        return 1 / (1 + distance) # Inverse relationship: smaller distance -> higher similarity
+        return 1 / (1 + distance) 
 
     def compare_descriptors(self, des1, des2, kp_count1, kp_count2):
         """
         Compares SIFT descriptors using FLANN matcher.
         Returns a similarity score based on the ratio of good matches to total keypoints.
         """
-        # Ensure descriptors are not empty and have enough points for matching
         if des1.size == 0 or des2.size == 0 or kp_count1 < 2 or kp_count2 < 2:
-            return 0.0, 0 # No similarity if no/few keypoints
-
-        # FLANN parameters for SIFT (KDTree for SIFT/SURF)
+            return 0.0, 0 
         FLANN_INDEX_KDTREE = 1
         index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-        search_params = dict(checks=50) # Number of times the trees should be recursively traversed
+        search_params = dict(checks=50) 
         matcher = cv2.FlannBasedMatcher(index_params, search_params)
-        
-        # Use knnMatch to find the two best matches for each descriptor
         matches = matcher.knnMatch(des1, des2, k=2)
         
         good_matches = []
-        # Apply Lowe's ratio test to filter good matches
         for match_pair in matches:
-            if len(match_pair) == 2: # Ensure we got two matches
+            if len(match_pair) == 2: 
                 m, n = match_pair
-                if m.distance < 0.7 * n.distance: # Ratio test threshold (0.7 is common)
+                if m.distance < 0.7 * n.distance: 
                     good_matches.append(m)
         
-        total_keypoints = min(kp_count1, kp_count2) # Normalize by the minimum number of keypoints
+        total_keypoints = min(kp_count1, kp_count2) 
         similarity = len(good_matches) / total_keypoints if total_keypoints > 0 else 0
-        return min(similarity, 1.0), len(good_matches) # Cap similarity at 1.0
+        return min(similarity, 1.0), len(good_matches) 
 
-# Utility function (not directly used in main CLI logic, but provided in original code)
 def add_pepper_noise(image_path, amount):
     image = cv2.imread(image_path)
     if image is None:
@@ -279,11 +219,11 @@ def add_pepper_noise(image_path, amount):
     for _ in range(num_pepper):
         y = np.random.randint(0, image.shape[0])
         x = np.random.randint(0, image.shape[1])
-        if len(image.shape) == 2: # Grayscale image
+        if len(image.shape) == 2:
             output[y, x] = 0
-        else: # Color image
-            output[y, x, :] = 0 # Set all color channels to 0 (black)
-    cv2.imwrite(f"noise_{image_path}", output)
+        else:
+            output[y, x, :] = 0
+    cv2.imwrite(f"noise_{amount}_{image_path}", output)
 
 
 def main():
@@ -322,24 +262,30 @@ def main():
             print(json.dumps({"error": f"Failed to calculate features for {img_path}. Image might be invalid or corrupted."}, indent=4))
             sys.exit(1)
         
-        # Check for similarity against existing images before inserting
         for existing_img_entry in features_data:
-            # existing_img_entry['features'] contains the actual feature dictionary
             comparison_result = detector.compare_image_features(existing_img_entry['features'], feature_to_insert, quick_mode=False)
             if comparison_result['final_similarity'] > args.insert_threshold:
+                # Optionally, find cid for the existing image
+                cidmap_data = {}
+                try:
+                    with open(CIDMAP_PATH, 'r') as cidmap_file:
+                        cidmap_data = json.load(cidmap_file)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    pass
+                existing_img_entry['cid'] = cidmap_data.get(str(existing_img_entry['img_id']), "Unknown CID")
+
                 print(json.dumps({
                     "status": "not_inserted",
                     "reason": "Image too similar to an existing entry.",
                     "img_path": img_path,
                     "existing_img_id": existing_img_entry['img_id'],
+                    "existing_img_cid": existing_img_entry.get('cid', "Unknown CID"),
                     "similarity_score": float(comparison_result['final_similarity']) # Ensure float
                 }, indent=4))
                 sys.exit(0) # Exit successfully, as the operation was handled (not inserted)
 
-        # Determine the new img_id
         new_img_id = 1
         if features_data:
-            # Find the maximum existing img_id and increment it
             new_img_id = max(entry['img_id'] for entry in features_data) + 1
 
         new_img_entry = {
