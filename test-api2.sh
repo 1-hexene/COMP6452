@@ -1,74 +1,73 @@
 #!/bin/bash
 
 HOST="http://localhost:3001"
-FILE="./testfile.jpg"
+FILE="./images/nvidia.png"
 
-LICENSOR="0x8829bACc3AA3cB48f149143746BE49C62cA0bE0B"
-BUYER="0x871f1B7B495E9C8500272699eA5423Ef1Dfe73Cb"
-
-SCOPE="Display"
-LICENSE_TYPE="CC-BY"
-PRICE="1"  # wei
-DURATION=30  # 30 days
+LICENSOR="0x075C0Be6312CDF3f9173E1cCb57fe02BF36A011E"
+LICENSEE="0x871f1B7B495E9C8500272699eA5423Ef1Dfe73Cb"
+SCOPE="CommercialWeb"
+PRICE="10000000000000000" # 0.01 ETH in wei
+DURATION=31536000
 TRANSFERABLE=true
-TERMS="non-exclusive"
-CURRENCY="AUD"
+LEGAL_TERMS="Standard_commercial_web_use"
 
+# Output functions
 print_success() { echo -e "\033[32m✅ $1\033[0m"; }
 print_error()   { echo -e "\033[31m❌ $1\033[0m"; }
 print_info()    { echo -e "\033[34mℹ️  $1\033[0m"; }
-
-extract_json_value() {
-    echo "$1" | grep -oP "(?<=\"$2\":\")[^\"]*"
-}
-
-extract_json_number() {
-    echo "$1" | grep -oP "(?<=\"$2\":)[0-9]+"
-}
+extract_json_value() { echo "$1" | grep -oP "(?<=\"$2\":\")[^\"]*" | head -1; }
 
 # ------------------------
-# 1. 上传文件到 IPFS
+# Upload file to IPFS
 # ------------------------
-print_info "上传文件到 IPFS..."
-UPLOAD_RESPONSE=$(curl -s -X POST "$HOST/api/ipfs/upload" \
-  -F "file=@$FILE")
-
-CID=$(extract_json_value "$UPLOAD_RESPONSE" "cid")
-if [ -z "$CID" ]; then
-    print_error "上传失败: $UPLOAD_RESPONSE"
+print_info "Uploading file to IPFS..."
+if [ ! -f "$FILE" ]; then
+    print_error "File does not exist: $FILE"
     exit 1
 fi
-print_success "文件上传成功，CID: $CID"
+
+UPLOAD_RESPONSE=$(curl -s -X POST "$HOST/api/ipfs/upload" -F "file=@$FILE")
+CID=$(extract_json_value "$UPLOAD_RESPONSE" "cid")
+
+if [ -z "$CID" ]; then
+    print_error "Upload failed: $UPLOAD_RESPONSE"
+    exit 1
+fi
+print_success "Upload successful, CID: $CID"
 
 # ------------------------
-# 2. 注册作品
+# Register work
 # ------------------------
-# print_info "注册作品上链..."
-# REGISTER_RESPONSE=$(curl -s -X POST "$HOST/api/ip/register" \
-#   -H "Content-Type: application/json" \
-#   -d "{
-#     \"author\": \"$LICENSOR\",
-#     \"filename\": \"testfile.jpg\",
-#     \"description\": \"Test upload\",
-#     \"cid\": \"$CID\",
-#     \"licenseType\": \"$LICENSE_TYPE\",
-#     \"location\": \"Earth\"
-#   }")
+print_info "Registering work on chain..."
+REGISTER_RESPONSE=$(curl -s -X POST "$HOST/api/ip/register" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"author\": \"$LICENSOR\",
+    \"filename\": \"testfile.jpg\",
+    \"description\": \"Test image registration\",
+    \"cid\": \"$CID\",
+    \"licenseType\": \"CC-BY\",
+    \"location\": \"Earth\"
+}")
 
-# TX_HASH=$(extract_json_value "$REGISTER_RESPONSE" "txHash")
-# TOKEN_ID=$(extract_json_value "$REGISTER_RESPONSE" "tokenId")
+TX_HASH=$(extract_json_value "$REGISTER_RESPONSE" "txHash")
+TOKEN_ID=$(extract_json_value "$REGISTER_RESPONSE" "tokenId")
+STATUS=$(extract_json_value "$REGISTER_RESPONSE" "status")
 
-# if [ -z "$TX_HASH" ]; then
-#     print_error "作品注册失败: $REGISTER_RESPONSE"
-#     exit 1
-# fi
-# print_success "注册成功，交易哈希: $TX_HASH, TokenID: $TOKEN_ID"
-TOKEN_ID=0
+if [ -z "$TX_HASH" ]; then
+    print_error "Registration failed: $REGISTER_RESPONSE"
+    exit 1
+fi
+print_success "Registration successful, transaction hash: $TX_HASH"
+print_info "Token ID: $TOKEN_ID"
+
+print_info "Sleep 10s to let blockchain become stable"
+sleep 10
+
 # ------------------------
-# 3. 设置授权条款
+# Set license terms
 # ------------------------
-print_info "设置授权条款..."
-
+print_info "Setting license terms..."
 TERMS_RESPONSE=$(curl -s -X POST "$HOST/api/license/terms" \
   -H "Content-Type: application/json" \
   -d "{
@@ -78,66 +77,76 @@ TERMS_RESPONSE=$(curl -s -X POST "$HOST/api/license/terms" \
     \"price\": \"$PRICE\",
     \"duration\": $DURATION,
     \"transferable\": $TRANSFERABLE,
-    \"legalTerms\": \"$TERMS\"
-  }")
+    \"legalTerms\": \"$LEGAL_TERMS\"
+}")
 
-if echo "$TERMS_RESPONSE" | grep -q "error"; then
-    print_error "设置授权条款失败: $TERMS_RESPONSE"
+TX_TERMS_HASH=$(extract_json_value "$TERMS_RESPONSE" "txHash")
+if [ -z "$TX_TERMS_HASH" ]; then
+    print_error "Failed to set license terms: $TERMS_RESPONSE"
     exit 1
 fi
+print_success "License terms set successfully: $TX_TERMS_HASH"
 
-print_success "授权条款设置成功"
+print_info "Sleep 10s to let blockchain become stable"
+sleep 10
 
 # ------------------------
-# 4. 购买授权
+# Purchase license
 # ------------------------
-print_info "购买授权许可..."
-
+print_info "Purchasing license..."
 PURCHASE_RESPONSE=$(curl -s -X POST "$HOST/api/license/purchase" \
   -H "Content-Type: application/json" \
   -d "{
     \"tokenId\": $TOKEN_ID,
     \"scope\": \"$SCOPE\",
     \"owner\": \"$LICENSOR\",
-    \"buyer\": \"$BUYER\"
-  }")
+    \"buyer\": \"$LICENSEE\"
+}")
+PURCHASE_TX_HASH=$(extract_json_value "$PURCHASE_RESPONSE" "txHash")
+LICENSE_ID=$(extract_json_value "$PURCHASE_RESPONSE" "licenseId")
 
-LICENSE_TX=$(extract_json_value "$PURCHASE_RESPONSE" "txHash")
-if [ -z "$LICENSE_TX" ]; then
-    print_error "购买失败: $PURCHASE_RESPONSE"
+print_info "Purchase TX Hash: $PURCHASE_TX_HASH"
+
+if [ -z "$PURCHASE_TX_HASH" ]; then
+    print_error "Failed to purchase license: $PURCHASE_RESPONSE"
     exit 1
 fi
-print_success "购买成功，交易哈希: $LICENSE_TX"
+print_success "License purchased successfully: $PURCHASE_TX_HASH"
+print_info "License ID: $LICENSE_ID"
 
 # ------------------------
-# 5. 验证授权许可
+# Verify license validity
 # ------------------------
-print_info "验证授权许可..."
-
-VALIDATE_RESPONSE=$(curl -s "$HOST/api/license/validate?user=$BUYER&tokenId=$TOKEN_ID&scope=$SCOPE")
-VALID=$(echo "$VALIDATE_RESPONSE" | grep -oP '"valid":\s*\K(true|false)')
+print_info "Verifying license validity..."
+VALIDATE_RESPONSE=$(curl -s "$HOST/api/license/validate?user=$LICENSEE&tokenId=$TOKEN_ID&scope=$SCOPE")
+VALID=$(echo "$VALIDATE_RESPONSE" | grep -oP '(?<="valid":)[^,}]*')
 
 if [ "$VALID" = "true" ]; then
-    print_success "验证成功，$BUYER 对 Token $TOKEN_ID 在 $SCOPE 拥有授权"
+    print_success "License verification successful: $LICENSEE has $SCOPE license for tokenId=$TOKEN_ID"
 else
-    print_error "验证失败，用户无有效授权"
+    print_error "License verification failed: $VALIDATE_RESPONSE"
 fi
 
 # ------------------------
-# 6. 查询币价
+# Query ETH price
 # ------------------------
-print_info "查询 $CURRENCY 价格..."
-ORACLE_RESPONSE=$(curl -s "$HOST/api/oracle/price?currency=$CURRENCY")
-PRICE_IN_AUD=$(extract_json_value "$ORACLE_RESPONSE" "price")
-print_success "$CURRENCY 当前价格: $PRICE_IN_AUD"
+print_info "Querying ETH price (AUD)..."
+ORACLE_RESPONSE=$(curl -s "$HOST/api/oracle/price?currency=AUD")
+AUD_PRICE=$(extract_json_value "$ORACLE_RESPONSE" "price")
+if [ -n "$AUD_PRICE" ]; then
+    print_success "1 ETH ≈ $AUD_PRICE AUD"
+else
+    print_error "Failed to get price: $ORACLE_RESPONSE"
+fi
 
 # ------------------------
-# 总结
+# Completed
 # ------------------------
 echo
-echo "========== 测试总结 =========="
+print_success "All tests completed!"
 print_info "CID: $CID"
-print_info "TokenID: $TOKEN_ID"
-print_info "注册交易: https://sepolia.etherscan.io/tx/$TX_HASH"
-print_info "许可交易: https://sepolia.etherscan.io/tx/$LICENSE_TX"
-print_success "所有步骤执行完毕 🎉"
+print_info "Token ID: $TOKEN_ID"
+print_info "License ID: $LICENSE_ID"
+print_info "Registration transaction: https://sepolia.etherscan.io/tx/$TX_HASH"
+print_info "Terms transaction: https://sepolia.etherscan.io/tx/$TX_TERMS_HASH"
+print_info "Purchase transaction: https://sepolia.etherscan.io/tx/$PURCHASE_TX_HASH"

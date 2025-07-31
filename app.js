@@ -62,7 +62,7 @@ const ScopeEnum = {
   ResaleRights: 5
 };
 
-const python_process_path = "/home/shilong/miniconda3/envs/comp6733/bin/python";
+const python_process_path = process.env.PYTHON_PATH;
 const cidmap_path = "cidmap.json"
 async function insertImageToDB(imgPath, threshold = 0.85) {
     return new Promise((resolve, reject) => {
@@ -446,6 +446,8 @@ async function isValidScope(tokenId, scope) {
  */
 app.post("/api/license/terms", async (req, res) => {
     const { owner, tokenId, scope, price, duration, transferable, legalTerms } = req.body;
+    console.log("tokenId = ",tokenId);
+    console.log("scope = ", scope);
     if (!tokenId || !scope) {
         return res.status(400).json({ error: "tokenId and scope are required" });
     }
