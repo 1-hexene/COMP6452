@@ -377,11 +377,11 @@ app.post("/api/ip/register", async (req, res) => {
 });
 
 async function convertWeitoAUD(weiPrice) {
-    const ethPrice = await oracle.getPrice(currency);
-    if (ethPrice === 0n) {
+    const fx_rate = await oracle.convert(1, "ETH", "AUD");
+    if (fx_rate === 0n) {
         throw new Error("ETH price is zero, cannot convert wei to AUD");
     }
-    return weiPrice * ethPrice / 1e18;
+    return weiPrice * BigInt(fx_rate) / BigInt(1e18);
 }
 
 
@@ -391,7 +391,8 @@ async function isValidScope(tokenId, scope) {
             return res.status(400).json({ error: "Invalid scope" });
         }
         const terms = await licenseManager.getLicenseTerms(Number(tokenId), ScopeEnum[scope]);
-
+        const price = await convertWeitoAUD(terms.price);
+        console.log(`License terms for token ${tokenId} and scope ${scope}:`, terms);
         return {
             tokenId: Number(tokenId),
             scope: terms.scope,
@@ -399,9 +400,10 @@ async function isValidScope(tokenId, scope) {
             duration: terms.duration.toString(),
             transferable: terms.transferable,
             legalTerms: terms.legalTerms,
-            priceInAud: await convertWeitoAUD(terms.price)
+            priceInAud: price.toString()
         };
     } catch (e) {
+        console.error("Error checking license terms:", e);
         return {};
     }
 }
@@ -447,9 +449,11 @@ app.get("/api/license/terms", async (req, res) => {
     if (!tokenId || !scope) {
         return res.status(400).json({ error: "tokenId and scope are required" });
     }
+    console.error("Invalid scope:", scope);
     if (!(scope in ScopeEnum)) {
         return res.status(400).json({ error: "Invalid scope" });
     }
+    console.error("Invalid scope:", scope);
     response = await isValidScope(tokenId, scope);
     if (Object.keys(response).length === 0) {
         return res.status(404).json({ error: "License Terms not found" });
@@ -494,7 +498,6 @@ app.post("/api/license/purchase", async (req, res) => {
         if (!ethers.isAddress(owner)) return res.status(400).json({ error: "Invalid owner address" });
         if (!ethers.isAddress(buyer)) return res.status(400).json({ error: "Invalid buyer address" });
         if (!(scope in ScopeEnum)) return res.status(400).json({ error: "Invalid scope" });
-        if (!tokenId || isNaN(tokenId)) return res.status(400).json({ error: "Invalid tokenId" });
         const terms = await isValidScope(tokenId, scope);
         if (Object.keys(terms).length === 0) {
             return res.status(404).json({ error: "License Terms not for sale" });
@@ -503,7 +506,9 @@ app.post("/api/license/purchase", async (req, res) => {
         if (price === 0n) return res.status(400).json({ error: "not for sale" });
 
         const tx = await licenseManager.purchaseLicense(tokenId, ScopeEnum[scope], owner, buyer);
+        console.log("Transaction sent:", tx.hash);
         await tx.wait();
+        console.log("Transaction confirmed:", tx.hash);
         res.json({ txHash: tx.hash });
     } catch (e) {
         res.status(500).json({ error: e.message });

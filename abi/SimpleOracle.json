@@ -7,6 +7,24 @@
 	{
 		"inputs": [
 			{
+				"internalType": "string",
+				"name": "currency",
+				"type": "string"
+			},
+			{
+				"internalType": "address",
+				"name": "feedAddress",
+				"type": "address"
+			}
+		],
+		"name": "updatePriceFeed",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
 				"internalType": "uint256",
 				"name": "amount",
 				"type": "uint256"
@@ -63,24 +81,6 @@
 			}
 		],
 		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "string",
-				"name": "currency",
-				"type": "string"
-			},
-			{
-				"internalType": "address",
-				"name": "feedAddress",
-				"type": "address"
-			}
-		],
-		"name": "updatePriceFeed",
-		"outputs": [],
-		"stateMutability": "nonpayable",
 		"type": "function"
 	}
 ]

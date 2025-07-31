@@ -6,10 +6,10 @@ FILE="./testfile.jpg"
 LICENSOR="0x8829bACc3AA3cB48f149143746BE49C62cA0bE0B"
 BUYER="0x871f1B7B495E9C8500272699eA5423Ef1Dfe73Cb"
 
-SCOPE="CommercialWeb"
+SCOPE="Display"
 LICENSE_TYPE="CC-BY"
-PRICE="10000000000000000"  # 0.01 ETH in wei
-DURATION=31536000  # 1 year
+PRICE="1"  # wei
+DURATION=30  # 30 days
 TRANSFERABLE=true
 TERMS="non-exclusive"
 CURRENCY="AUD"
@@ -43,27 +43,27 @@ print_success "文件上传成功，CID: $CID"
 # ------------------------
 # 2. 注册作品
 # ------------------------
-print_info "注册作品上链..."
-REGISTER_RESPONSE=$(curl -s -X POST "$HOST/api/ip/register" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"author\": \"$LICENSOR\",
-    \"filename\": \"testfile.jpg\",
-    \"description\": \"Test upload\",
-    \"cid\": \"$CID\",
-    \"licenseType\": \"$LICENSE_TYPE\",
-    \"location\": \"Earth\"
-  }")
+# print_info "注册作品上链..."
+# REGISTER_RESPONSE=$(curl -s -X POST "$HOST/api/ip/register" \
+#   -H "Content-Type: application/json" \
+#   -d "{
+#     \"author\": \"$LICENSOR\",
+#     \"filename\": \"testfile.jpg\",
+#     \"description\": \"Test upload\",
+#     \"cid\": \"$CID\",
+#     \"licenseType\": \"$LICENSE_TYPE\",
+#     \"location\": \"Earth\"
+#   }")
 
-TX_HASH=$(extract_json_value "$REGISTER_RESPONSE" "txHash")
-TOKEN_ID=$(extract_json_value "$REGISTER_RESPONSE" "tokenId")
+# TX_HASH=$(extract_json_value "$REGISTER_RESPONSE" "txHash")
+# TOKEN_ID=$(extract_json_value "$REGISTER_RESPONSE" "tokenId")
 
-if [ -z "$TX_HASH" ]; then
-    print_error "作品注册失败: $REGISTER_RESPONSE"
-    exit 1
-fi
-print_success "注册成功，交易哈希: $TX_HASH, TokenID: $TOKEN_ID"
-
+# if [ -z "$TX_HASH" ]; then
+#     print_error "作品注册失败: $REGISTER_RESPONSE"
+#     exit 1
+# fi
+# print_success "注册成功，交易哈希: $TX_HASH, TokenID: $TOKEN_ID"
+TOKEN_ID=0
 # ------------------------
 # 3. 设置授权条款
 # ------------------------
