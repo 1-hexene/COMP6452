@@ -18,13 +18,12 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-
 const __filename = fileURLToPath(import.meta.url);
 const swaggerOptions = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'IPFS/Checker/Blockchain API',
+      title: 'Blockchain API',
       version: '1.0.0',
       description: 'API documentation for IPFS upload, image similarity, and blockchain registration.'
     },
@@ -54,6 +53,14 @@ import oracleABI from "./abi/SimpleOracle.json" with { type: "json" };
 const ipRegistry = new ethers.Contract(process.env.IPREGISTRY_ADDRESS, ipRegistryABI, wallet);
 const licenseManager = new ethers.Contract(process.env.LICENSEMANAGER_ADDRESS, licenseManagerABI, wallet);
 const oracle = new ethers.Contract(process.env.ORACLE_ADDRESS, oracleABI, wallet);
+const ScopeEnum = {
+  Display: 0,
+  Print: 1,
+  CommercialWeb: 2,
+  NFTRemix: 3,
+  SocialMedia: 4,
+  ResaleRights: 5
+};
 
 const python_process_path = "/home/shilong/miniconda3/envs/comp6733/bin/python";
 const cidmap_path = "cidmap.json"
@@ -278,33 +285,31 @@ app.post("/api/ipfs/similar", upload.single("file"), async (req, res) => {
  *                 type: string
  *               location:
  *                 type: string
- *               isCommercial:
- *                 type: string
  *     responses:
  *       200:
  *         description: Registration result
  */
 app.post("/api/ip/register", async (req, res) => {
     try {
-        const { author, filename, description, cid, licenseType, location, isCommercial } = req.body;
+        const { author, filename, description, cid, licenseType, location } = req.body;
         
         if (!ethers.isAddress(author)) {
             throw new Error(`Invalid author address: ${author}`);
         }
         
         console.log('Registering IP with params:', {
-            author, filename, description, cid, licenseType, location, isCommercial
+            author, filename, description, cid, licenseType, location
         });
         
         const timestamp = Math.floor(Date.now()/1000).toString();
         
         const gasEstimate = await ipRegistry.registerIP.estimateGas(
-            author, filename, timestamp, description, cid, licenseType, location, isCommercial === "true"
+            author, filename, timestamp, description, cid, licenseType, location
         );
         console.log('Gas estimate:', gasEstimate.toString());
         
         const tx = await ipRegistry.registerIP(
-            author, filename, timestamp, description, cid, licenseType, location, isCommercial === "true",
+            author, filename, timestamp, description, cid, licenseType, location,
             { gasLimit: gasEstimate * 120n / 100n }
         );
         
@@ -371,7 +376,35 @@ app.post("/api/ip/register", async (req, res) => {
     }
 });
 
+async function convertWeitoAUD(weiPrice) {
+    const ethPrice = await oracle.getPrice(currency);
+    if (ethPrice === 0n) {
+        throw new Error("ETH price is zero, cannot convert wei to AUD");
+    }
+    return weiPrice * ethPrice / 1e18;
+}
 
+
+async function isValidScope(tokenId, scope) {
+    try {
+        if (!(scope in ScopeEnum)) {
+            return res.status(400).json({ error: "Invalid scope" });
+        }
+        const terms = await licenseManager.getLicenseTerms(Number(tokenId), ScopeEnum[scope]);
+
+        return {
+            tokenId: Number(tokenId),
+            scope: terms.scope,
+            price: ethers.formatEther(terms.price),
+            duration: terms.duration.toString(),
+            transferable: terms.transferable,
+            legalTerms: terms.legalTerms,
+            priceInAud: await convertWeitoAUD(terms.price)
+        };
+    } catch (e) {
+        return {};
+    }
+}
 /**
  * @swagger
  * /api/license/terms:
@@ -409,87 +442,19 @@ app.post("/api/ip/register", async (req, res) => {
  *                 txHash:
  *                   type: string
  */
-app.post("/api/license/terms", async (req, res) => {
-    try {
-        const { owner, tokenId, scope, price, duration, transferable, legalTerms } = req.body;
-        if (!ethers.isAddress(owner)) return res.status(400).json({ error: "Invalid owner address" });
-        if (!(scope in ScopeEnum)) return res.status(400).json({ error: "Invalid scope" });
-        const tx = await licenseManager.setLicenseTerms(
-            owner,
-            Number(tokenId),
-            ScopeEnum[scope],
-            ethers.parseEther(price),
-            Number(duration), 
-            transferable === true || transferable === "true",
-            legalTerms
-        );
-        await tx.wait();
-        res.json({ txHash: tx.hash });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-
-/**
- * @swagger
- * /api/license/terms:
- *   get:
- *     summary: Retrieve the terms of a license
- *     parameters:
- *       - in: query
- *         name: tokenId
- *         schema:
- *           type: integer
- *         required: true
- *         description: The ID of the token
- *       - in: query
- *         name: scope
- *         schema:
- *           type: string
- *         required: true
- *         description: The scope of the license
- *     responses:
- *       200:
- *         description: License terms retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 tokenId:
- *                   type: integer
- *                 scope:
- *                   type: string
- *                 price:
- *                   type: string
- *                 duration:
- *                   type: integer
- *                 transferable:
- *                   type: boolean
- *                 legalTerms:
- *                   type: string
- *       400:
- *         description: Invalid scope or token ID
- *       500:
- *         description: Server error
- */
 app.get("/api/license/terms", async (req, res) => {
-    try {
-        const { tokenId, scope } = req.query;
-        if (!(scope in ScopeEnum)) return res.status(400).json({ error: "Invalid scope" });
-        const terms = await licenseManager.getLicenseTerms(Number(tokenId), ScopeEnum[scope]);
-        res.json({
-            tokenId: Number(tokenId),
-            scope: ScopeEnum[scope],
-            price: ethers.formatEther(terms.price),
-            duration: terms.duration,
-            transferable: terms.transferable,
-            legalTerms: terms.legalTerms
-        });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+    const { tokenId, scope } = req.query;
+    if (!tokenId || !scope) {
+        return res.status(400).json({ error: "tokenId and scope are required" });
     }
+    if (!(scope in ScopeEnum)) {
+        return res.status(400).json({ error: "Invalid scope" });
+    }
+    response = await isValidScope(tokenId, scope);
+    if (Object.keys(response).length === 0) {
+        return res.status(404).json({ error: "License Terms not found" });
+    }
+    res.json(response);
 });
 
 /**
@@ -510,6 +475,8 @@ app.get("/api/license/terms", async (req, res) => {
  *                 type: string
  *               owner:
  *                 type: string
+ *               buyer:
+ *                 type: string
  *     responses:
  *       200:
  *         description: License purchase result
@@ -523,15 +490,19 @@ app.get("/api/license/terms", async (req, res) => {
  */
 app.post("/api/license/purchase", async (req, res) => {
     try {
-        const { tokenId, scope, owner } = req.body;
+        const { tokenId, scope, owner, buyer } = req.body;
         if (!ethers.isAddress(owner)) return res.status(400).json({ error: "Invalid owner address" });
+        if (!ethers.isAddress(buyer)) return res.status(400).json({ error: "Invalid buyer address" });
         if (!(scope in ScopeEnum)) return res.status(400).json({ error: "Invalid scope" });
-
-        const terms = await licenseManager.getLicenseTerms(tokenId, ScopeEnum[scope]);
+        if (!tokenId || isNaN(tokenId)) return res.status(400).json({ error: "Invalid tokenId" });
+        const terms = await isValidScope(tokenId, scope);
+        if (Object.keys(terms).length === 0) {
+            return res.status(404).json({ error: "License Terms not for sale" });
+        }
         const price = terms.price;
-        if (price === 0n) return res.status(400).json({ error: "Not for sale" });
+        if (price === 0n) return res.status(400).json({ error: "not for sale" });
 
-        const tx = await licenseManager.purchaseLicense(tokenId, ScopeEnum[scope], owner, { value: price });
+        const tx = await licenseManager.purchaseLicense(tokenId, ScopeEnum[scope], owner, buyer);
         await tx.wait();
         res.json({ txHash: tx.hash });
     } catch (e) {
@@ -758,7 +729,7 @@ app.get('/api/license/token/:tokenId', async (req, res) => {
  *           type: string
  *     responses:
  *       200:
- *         description: 价格结果
+ *         description: Price in the specified currency
  */
 app.get("/api/oracle/price", async (req, res) => {
     try {
@@ -952,6 +923,10 @@ app.get('/api/works/:id', async (req, res) => {
  *               properties:
  *                 txHash:
  *                   type: string
+ *                oldLicenseId:
+ *                  type: string
+ *                newLicensee:
+ *                  type: string
  *       400:
  *         description: Invalid new licensee address
  *       500:
@@ -962,8 +937,12 @@ app.post('/api/license/transfer', async (req, res) => {
         const { licenseId, newLicensee } = req.body;
         if (!ethers.isAddress(newLicensee)) return res.status(400).json({ error: 'Invalid new licensee address' });
         const tx = await licenseManager.transferLicense(licenseId, newLicensee);
+        const args = parseEventFromReceipt(await tx.wait(), licenseManager.interface, 'LicenseTransferred');
+        if (!args) {
+            return res.status(500).json({ error: 'Transfer event not found in transaction receipt' });
+        }
         await tx.wait();
-        res.json({ txHash: tx.hash });
+        res.json({ txHash: tx.hash , oldLicenseId: args.licenseId.toString(), newLicensee: args.newLicensee });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
