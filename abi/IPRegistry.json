@@ -77,6 +77,25 @@
 		"anonymous": false,
 		"inputs": [
 			{
+				"indexed": true,
+				"internalType": "uint256",
+				"name": "licenseId",
+				"type": "uint256"
+			},
+			{
+				"indexed": true,
+				"internalType": "address",
+				"name": "licensee",
+				"type": "address"
+			}
+		],
+		"name": "LicenseCreated",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
 				"indexed": false,
 				"internalType": "uint256",
 				"name": "_tokenId",
@@ -206,11 +225,6 @@
 				"internalType": "string",
 				"name": "region",
 				"type": "string"
-			},
-			{
-				"internalType": "bool",
-				"name": "isCommercial",
-				"type": "bool"
 			}
 		],
 		"stateMutability": "view",
@@ -359,11 +373,6 @@
 				"internalType": "string",
 				"name": "region",
 				"type": "string"
-			},
-			{
-				"internalType": "bool",
-				"name": "isCommercial",
-				"type": "bool"
 			}
 		],
 		"name": "registerIP",
@@ -473,6 +482,25 @@
 				"internalType": "string",
 				"name": "",
 				"type": "string"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "tokenId",
+				"type": "uint256"
+			}
+		],
+		"name": "tokenExists",
+		"outputs": [
+			{
+				"internalType": "bool",
+				"name": "",
+				"type": "bool"
 			}
 		],
 		"stateMutability": "view",
